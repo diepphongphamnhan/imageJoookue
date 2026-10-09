@@ -24,7 +24,12 @@ import {
   AlertTriangle,
   CheckCircle2,
   Trash2,
-  Plus
+  Plus,
+  Tag,
+  Music,
+  Volume2,
+  Radio,
+  BookOpen
 } from "lucide-react";
 import JSZip from "jszip";
 import {
@@ -32,6 +37,7 @@ import {
   MAIN_GO_CONTENT,
   CONVERTER_GO_CONTENT,
   SPRITESHEET_GO_CONTENT,
+  METADATA_INJECTOR_GO_CONTENT,
   BUILD_INSTRUCTIONS_CONTENT,
   GO_MOD_CONTENT,
   BUILD_WINDOWS_PS1_CONTENT,
@@ -62,6 +68,7 @@ export default function App() {
         folder.file("main.go", MAIN_GO_CONTENT);
         folder.file("converter.go", CONVERTER_GO_CONTENT);
         folder.file("spritesheet.go", SPRITESHEET_GO_CONTENT);
+        folder.file("metadata_injector.go", METADATA_INJECTOR_GO_CONTENT);
         folder.file("build_instructions.txt", BUILD_INSTRUCTIONS_CONTENT);
         folder.file("build_windows.ps1", BUILD_WINDOWS_PS1_CONTENT);
         folder.file("build_linux.sh", BUILD_LINUX_SH_CONTENT);
@@ -199,7 +206,7 @@ export default function App() {
 // COMPONENT 1: SIMULATOR VIEW (Trình giả lập ứng dụng Desktop Fyne)
 // =============================================================================
 function SimulatorView() {
-  const [fyneTab, setFyneTab] = useState<"batch" | "sprite">("batch");
+  const [fyneTab, setFyneTab] = useState<"batch" | "sprite" | "metadata" | "audiosync">("batch");
   const [sampleFrames, setSampleFrames] = useState<SampleFrame[]>([]);
   
   // Batch Converter State
@@ -223,6 +230,34 @@ function SimulatorView() {
   const [spriteMetadata, setSpriteMetadata] = useState<{ width: number; height: number; cellW: number; cellH: number } | null>(null);
   const [showGridOverlay, setShowGridOverlay] = useState<boolean>(true);
 
+  // Metadata Injection State
+  const [metaFiles, setMetaFiles] = useState<SampleFrame[]>([]);
+  const [metaRows, setMetaRows] = useState<{ id: string; key: string; value: string }[]>([
+    { id: "1", key: "Author", value: "PhanKim" },
+    { id: "2", key: "Copyright", value: "© 2026 Studio" },
+    { id: "3", key: "Description", value: "Artwork Frame 01" },
+    { id: "4", key: "Keywords", value: "comic, webtoon, action" },
+  ]);
+  const [keepOldExif, setKeepOldExif] = useState<boolean>(true);
+  const [metaOutputDir, setMetaOutputDir] = useState<string>("C:\\Users\\GameDev\\Pictures\\Metadata_Out");
+  const [isInjectingMeta, setIsInjectingMeta] = useState<boolean>(false);
+  const [metaProgress, setMetaProgress] = useState<number>(0);
+  const [injectedMetaOutputs, setInjectedMetaOutputs] = useState<{ name: string; properties: Record<string, string> }[]>([]);
+
+  // Audio Sync Mapper State
+  const [audioFiles, setAudioFiles] = useState<SampleFrame[]>([]);
+  const [audioSrc, setAudioSrc] = useState<string>("sfx_sword_slash.mp3");
+  const [audioTrigger, setAudioTrigger] = useState<string>("on_scroll_view");
+  const [audioDelay, setAudioDelay] = useState<number>(300);
+  const [audioVolume, setAudioVolume] = useState<number>(80);
+  const [audioLoop, setAudioLoop] = useState<boolean>(false);
+  const [audioOutputDir, setAudioOutputDir] = useState<string>("C:\\Users\\GameDev\\Comics\\Audio_Synced_Out");
+  const [isInjectingAudio, setIsInjectingAudio] = useState<boolean>(false);
+  const [audioProgress, setAudioProgress] = useState<number>(0);
+  const [injectedAudioOutputs, setInjectedAudioOutputs] = useState<{ name: string; json: string }[]>([]);
+  const [activeReaderFrameIndex, setActiveReaderFrameIndex] = useState<number>(0);
+  const [audioPlayedNotice, setAudioPlayedNotice] = useState<string | null>(null);
+
   // Live Animation Player State
   const [isPlayingAnimation, setIsPlayingAnimation] = useState<boolean>(false);
   const [animFps, setAnimFps] = useState<number>(8);
@@ -230,12 +265,72 @@ function SimulatorView() {
   const animCanvasRef = useRef<HTMLCanvasElement>(null);
   const animTimerRef = useRef<number | null>(null);
 
+  // Audio Synthesizer Preview Helper
+  const playSynthesizedSound = (soundType: string, volume: number) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const gainNode = ctx.createGain();
+      gainNode.gain.setValueAtTime((volume / 100) * 0.35, ctx.currentTime);
+      gainNode.connect(ctx.destination);
+
+      if (soundType.includes("sword") || soundType.includes("slash")) {
+        // Sword Slash Sound (Filtered noise sweep)
+        const bufferSize = ctx.sampleRate * 0.25;
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+          data[i] = Math.random() * 2 - 1;
+        }
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+        const filter = ctx.createBiquadFilter();
+        filter.type = "bandpass";
+        filter.frequency.setValueAtTime(3200, ctx.currentTime);
+        filter.frequency.exponentialRampToValueAtTime(300, ctx.currentTime + 0.22);
+        noise.connect(filter);
+        filter.connect(gainNode);
+        noise.start();
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.24);
+      } else if (soundType.includes("bgm")) {
+        // Melodic ambient pad chord
+        [220, 277.18, 329.63, 440].forEach((freq, idx) => {
+          const osc = ctx.createOscillator();
+          osc.type = "sine";
+          osc.frequency.setValueAtTime(freq, ctx.currentTime);
+          const chordGain = ctx.createGain();
+          chordGain.gain.setValueAtTime(0.06, ctx.currentTime);
+          chordGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 1.2);
+          osc.connect(chordGain);
+          chordGain.connect(gainNode);
+          osc.start(ctx.currentTime + idx * 0.05);
+          osc.stop(ctx.currentTime + 1.2);
+        });
+      } else {
+        // Magical chime effect
+        const osc = ctx.createOscillator();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.3);
+        osc.connect(gainNode);
+        osc.start();
+        gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+        osc.stop(ctx.currentTime + 0.35);
+      }
+    } catch (e) {
+      console.warn("Audio Context error", e);
+    }
+  };
+
   // Initialize sample frames on load
   useEffect(() => {
     const frames = generateSampleCharacterFrames();
     setSampleFrames(frames);
     setBatchFiles(frames.slice(0, 4));
     setSpriteFrames(frames);
+    setMetaFiles(frames.slice(0, 3));
+    setAudioFiles(frames.slice(0, 4));
   }, []);
 
   // Animation player effect
@@ -416,10 +511,10 @@ function SimulatorView() {
         </div>
 
         {/* Fyne Tab Header */}
-        <div className="bg-slate-850 border-b border-slate-750 px-4 flex gap-1">
+        <div className="bg-slate-850 border-b border-slate-750 px-4 flex gap-1 overflow-x-auto">
           <button
             onClick={() => setFyneTab("batch")}
-            className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
               fyneTab === "batch"
                 ? "border-blue-500 text-blue-400 bg-slate-800/60"
                 : "border-transparent text-slate-400 hover:text-slate-200"
@@ -434,7 +529,7 @@ function SimulatorView() {
 
           <button
             onClick={() => setFyneTab("sprite")}
-            className={`flex items-center gap-2 px-5 py-3 text-xs font-semibold border-b-2 transition-all cursor-pointer ${
+            className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
               fyneTab === "sprite"
                 ? "border-blue-500 text-blue-400 bg-slate-800/60"
                 : "border-transparent text-slate-400 hover:text-slate-200"
@@ -444,6 +539,36 @@ function SimulatorView() {
             <span>Tạo Sprite Sheet</span>
             <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-700 text-slate-300">
               {spriteFrames.length} frames
+            </span>
+          </button>
+
+          <button
+            onClick={() => setFyneTab("metadata")}
+            className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+              fyneTab === "metadata"
+                ? "border-blue-500 text-blue-400 bg-slate-800/60"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Tag className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Gắn Siêu Dữ Liệu (EXIF)</span>
+            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800">
+              {metaFiles.length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setFyneTab("audiosync")}
+            className={`flex items-center gap-2 px-4 py-3 text-xs font-semibold border-b-2 transition-all cursor-pointer whitespace-nowrap ${
+              fyneTab === "audiosync"
+                ? "border-blue-500 text-blue-400 bg-slate-800/60"
+                : "border-transparent text-slate-400 hover:text-slate-200"
+            }`}
+          >
+            <Music className="w-3.5 h-3.5 text-teal-400" />
+            <span>Liên Kết Âm Thanh (Webtoon)</span>
+            <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-teal-950 text-teal-300 border border-teal-800">
+              {audioFiles.length}
             </span>
           </button>
         </div>
@@ -936,6 +1061,474 @@ function SimulatorView() {
                       </p>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: CUSTOM METADATA / EXIF INJECTION */}
+          {fyneTab === "metadata" && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Config Panel */}
+              <div className="lg:col-span-7 space-y-4">
+                <div>
+                  <h3 className="font-bold text-white text-base flex items-center gap-2">
+                    <Tag className="w-4 h-4 text-indigo-400" />
+                    Gắn Siêu Dữ Liệu Tùy Chỉnh (Custom Metadata / EXIF Injection)
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Nhúng các trường thông tin bản quyền, tác giả, ghi chú vào bên trong cấu trúc header ảnh mà KHÔNG làm thay đổi chất lượng điểm ảnh.
+                  </p>
+                </div>
+
+                {/* File picker */}
+                <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <label className="text-xs font-semibold text-slate-200">
+                      Chọn file ảnh nguồn:
+                    </label>
+                    <div className="flex items-center gap-2">
+                      <label className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow">
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>Chọn Nhiều File...</span>
+                        <input
+                          type="file"
+                          multiple
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, "batch")}
+                        />
+                      </label>
+                      <button
+                        onClick={() => setMetaFiles([])}
+                        className="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-red-900/50 hover:text-red-300 text-slate-300 text-xs font-medium cursor-pointer"
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-400">
+                    Đã nạp: <span className="font-semibold text-indigo-400">{metaFiles.length} file</span>
+                  </div>
+                </div>
+
+                {/* Key-Value Table */}
+                <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-200">
+                      Bảng Nhập Key - Value Siêu Dữ Liệu:
+                    </h4>
+                    <button
+                      onClick={() =>
+                        setMetaRows((prev) => [
+                          ...prev,
+                          { id: `${Date.now()}`, key: "", value: "" },
+                        ])
+                      }
+                      className="px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Thêm Dòng</span>
+                    </button>
+                  </div>
+
+                  <div className="space-y-2 max-h-[190px] overflow-y-auto pr-1">
+                    {metaRows.map((row, idx) => (
+                      <div key={row.id} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          placeholder="Key (vd: Author, Copyright)"
+                          value={row.key}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setMetaRows((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, key: val } : r))
+                            );
+                          }}
+                          className="w-5/12 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:border-indigo-500 focus:outline-none"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Value (vd: PhanKim, © 2026)"
+                          value={row.value}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setMetaRows((prev) =>
+                              prev.map((r, i) => (i === idx ? { ...r, value: val } : r))
+                            );
+                          }}
+                          className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 font-mono focus:border-indigo-500 focus:outline-none"
+                        />
+                        <button
+                          onClick={() => {
+                            if (metaRows.length > 1) {
+                              setMetaRows((prev) => prev.filter((_, i) => i !== idx));
+                            }
+                          }}
+                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-red-950/60 hover:text-red-400 text-slate-400 transition-colors cursor-pointer"
+                          title="Xóa dòng"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Overwrite mode */}
+                  <div className="pt-2 border-t border-slate-700/60 space-y-1.5 text-xs">
+                    <label className="text-[11px] font-semibold text-slate-300 block">
+                      Tùy chọn xử lý EXIF gốc:
+                    </label>
+                    <div className="flex flex-wrap gap-4">
+                      <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                        <input
+                          type="radio"
+                          name="exifMode"
+                          checked={keepOldExif}
+                          onChange={() => setKeepOldExif(true)}
+                          className="accent-indigo-500 cursor-pointer"
+                        />
+                        <span>Giữ lại EXIF cũ (Chỉ chèn thêm trường mới)</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer text-slate-300">
+                        <input
+                          type="radio"
+                          name="exifMode"
+                          checked={!keepOldExif}
+                          onChange={() => setKeepOldExif(false)}
+                          className="accent-indigo-500 cursor-pointer"
+                        />
+                        <span>Ghi đè hoàn toàn (Xóa sạch profile cũ)</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Destination folder */}
+                <div className="p-3 rounded-xl bg-slate-800/60 border border-slate-700/60 text-xs space-y-1.5">
+                  <label className="font-semibold text-slate-300">Thư mục lưu:</label>
+                  <input
+                    type="text"
+                    value={metaOutputDir}
+                    onChange={(e) => setMetaOutputDir(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 font-mono text-slate-300 text-xs"
+                  />
+                </div>
+
+                {/* Execute button */}
+                <div className="space-y-2">
+                  <button
+                    onClick={() => {
+                      if (metaFiles.length === 0) return;
+                      setIsInjectingMeta(true);
+                      setMetaProgress(0);
+                      const validMap: Record<string, string> = {};
+                      metaRows.forEach((r) => {
+                        if (r.key.trim()) validMap[r.key.trim()] = r.value;
+                      });
+
+                      let cur = 0;
+                      const interval = setInterval(() => {
+                        cur++;
+                        const prog = (cur / metaFiles.length) * 100;
+                        setMetaProgress(prog);
+                        if (cur >= metaFiles.length) {
+                          clearInterval(interval);
+                          setIsInjectingMeta(false);
+                          const outputs = metaFiles.map((f) => ({
+                            name: f.name,
+                            properties: { ...validMap, "magick:mode": keepOldExif ? "merged" : "stripped" },
+                          }));
+                          setInjectedMetaOutputs(outputs);
+                        }
+                      }, 300);
+                    }}
+                    disabled={isInjectingMeta || metaFiles.length === 0}
+                    className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-indigo-600 via-purple-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20 cursor-pointer disabled:opacity-50"
+                  >
+                    <Tag className="w-4 h-4" />
+                    <span>{isInjectingMeta ? "Đang gọi MagickSetImageProperty..." : "Gắn Metadata Hàng Loạt"}</span>
+                  </button>
+
+                  <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+                    <div
+                      className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-300"
+                      style={{ width: `${metaProgress}%` }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Right Panel: Embedded Metadata Inspector */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/60 space-y-3">
+                  <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                    <Info className="w-3.5 h-3.5 text-indigo-400" />
+                    Trình Soi Siêu Dữ Liệu (Embedded Metadata Inspector):
+                  </h4>
+                  <p className="text-[11px] text-slate-400">
+                    Mô phỏng dữ liệu EXIF/Property nhúng vĩnh viễn trong file ảnh:
+                  </p>
+
+                  <div className="space-y-2">
+                    {metaFiles.map((f, i) => (
+                      <div
+                        key={f.id}
+                        className="p-3 rounded-lg bg-slate-900/90 border border-slate-750 text-xs space-y-1.5"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-cyan-300 font-semibold">{f.name}</span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-800">
+                            Header OK
+                          </span>
+                        </div>
+                        <div className="space-y-1 pt-1 border-t border-slate-800 text-[11px] font-mono">
+                          {metaRows.map((r, idx) => (
+                            <div key={idx} className="flex justify-between text-slate-400">
+                              <span className="text-slate-500">{r.key || `Field_${idx}`}:</span>
+                              <span className="text-slate-200 truncate max-w-[180px]">{r.value || "(trống)"}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: AUDIO SYNC MAPPER (WEBTOON / COMIC) */}
+          {fyneTab === "audiosync" && (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Config Panel */}
+              <div className="lg:col-span-7 space-y-4">
+                <div>
+                  <h3 className="font-bold text-white text-base flex items-center gap-2">
+                    <Music className="w-4 h-4 text-teal-400" />
+                    Trình Liên Kết Âm Thanh (Audio Sync Mapper - Webtoon/Comic)
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Gắn kịch bản âm thanh (SFX/BGM) trực tiếp vào metadata từng ảnh truyện tranh. Biến ảnh thành file tự chứa kịch bản để Chrome Extension hoặc App tự phát nhạc khi độc giả cuộn đến.
+                  </p>
+                </div>
+
+                {/* Audio Script Form */}
+                <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-3.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-200 mb-1">
+                      File âm thanh (`Audio Source`):
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={audioSrc}
+                        onChange={(e) => setAudioSrc(e.target.value)}
+                        className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-teal-300 font-mono focus:border-teal-500 focus:outline-none"
+                      />
+                      <button
+                        onClick={() => playSynthesizedSound(audioSrc, audioVolume)}
+                        className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-medium flex items-center gap-1 cursor-pointer"
+                        title="Nghe thử hiệu ứng âm thanh"
+                      >
+                        <Volume2 className="w-3.5 h-3.5" />
+                        <span>Nghe Thử</span>
+                      </button>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      <span className="text-[10px] text-slate-400">Chọn nhanh mẫu:</span>
+                      {["sfx_sword_slash.mp3", "bgm_chapter1.ogg", "sfx_magic_spell.wav"].map((name) => (
+                        <button
+                          key={name}
+                          onClick={() => setAudioSrc(name)}
+                          className="text-[10px] px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-700 border border-slate-700 text-slate-300 font-mono cursor-pointer"
+                        >
+                          {name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-200 mb-1">
+                      Sự kiện kích hoạt (`Trigger Event`):
+                    </label>
+                    <select
+                      value={audioTrigger}
+                      onChange={(e) => setAudioTrigger(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white cursor-pointer focus:border-teal-500 focus:outline-none"
+                    >
+                      <option value="on_scroll_view">on_scroll_view (Phát nhạc ngay khi ảnh cuộn vào tầm mắt)</option>
+                      <option value="on_center_screen">on_center_screen (Phát nhạc khi ảnh nằm chính giữa màn hình)</option>
+                      <option value="on_click">on_click (Phát nhạc khi người đọc bấm/chạm vào bức ảnh)</option>
+                    </select>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-200 mb-1">
+                        Thời điểm trễ (`Delay`):
+                      </label>
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          value={audioDelay}
+                          onChange={(e) => setAudioDelay(Number(e.target.value) || 0)}
+                          className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white font-mono focus:border-teal-500 focus:outline-none"
+                        />
+                        <span className="text-xs text-slate-400">ms</span>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="text-xs font-semibold text-slate-200">Âm lượng (`Volume`):</label>
+                        <span className="text-xs font-mono font-bold text-teal-400">{audioVolume}%</span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0"
+                        max="100"
+                        value={audioVolume}
+                        onChange={(e) => setAudioVolume(Number(e.target.value))}
+                        className="w-full accent-teal-500 cursor-pointer"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="pt-1">
+                    <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={audioLoop}
+                        onChange={(e) => setAudioLoop(e.target.checked)}
+                        className="rounded accent-teal-500 cursor-pointer"
+                      />
+                      <span>Phát lặp vô hạn (`Loop = true` - Dành cho nhạc nền BGM)</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* JSON Preview Box */}
+                <div className="p-3.5 rounded-xl bg-slate-800/60 border border-slate-700/60 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                      <FileCode className="w-3.5 h-3.5 text-teal-400" />
+                      Khung Xem Trước Kịch Bản (JSON Preview Realtime):
+                    </h4>
+                    <span className="text-[10px] text-teal-300 font-mono">comic_audio_config</span>
+                  </div>
+
+                  <pre className="p-3 rounded-lg bg-slate-950 font-mono text-xs text-emerald-400 overflow-x-auto leading-relaxed border border-slate-800 select-text">
+{JSON.stringify(
+  {
+    audio_sync: {
+      src: audioSrc,
+      trigger: audioTrigger,
+      volume: parseFloat((audioVolume / 100).toFixed(2)),
+      delay: audioDelay,
+      loop: audioLoop,
+    },
+  },
+  null,
+  2
+)}
+                  </pre>
+                </div>
+
+                {/* Embed Action */}
+                <button
+                  onClick={() => {
+                    if (audioFiles.length === 0) return;
+                    setIsInjectingAudio(true);
+                    setAudioProgress(0);
+
+                    let cur = 0;
+                    const interval = setInterval(() => {
+                      cur++;
+                      setAudioProgress((cur / audioFiles.length) * 100);
+                      if (cur >= audioFiles.length) {
+                        clearInterval(interval);
+                        setIsInjectingAudio(false);
+                        const outputs = audioFiles.map((f) => ({
+                          name: f.name,
+                          json: JSON.stringify({
+                            audio_sync: {
+                              src: audioSrc,
+                              trigger: audioTrigger,
+                              volume: audioVolume / 100,
+                              delay: audioDelay,
+                              loop: audioLoop,
+                            },
+                          }),
+                        }));
+                        setInjectedAudioOutputs(outputs);
+                      }
+                    }, 300);
+                  }}
+                  disabled={isInjectingAudio || audioFiles.length === 0}
+                  className="w-full py-2.5 px-4 rounded-xl bg-gradient-to-r from-teal-600 via-emerald-600 to-cyan-600 hover:from-teal-500 hover:to-cyan-500 text-white font-semibold text-xs flex items-center justify-center gap-2 shadow-lg shadow-teal-600/20 cursor-pointer disabled:opacity-50"
+                >
+                  <Music className="w-4 h-4" />
+                  <span>{isInjectingAudio ? "Đang nhúng chuỗi JSON vào metadata..." : "Nhúng Kịch Bản Âm Thanh Hàng Loạt"}</span>
+                </button>
+              </div>
+
+              {/* Right Panel: Webtoon Comic Reader Live Simulation */}
+              <div className="lg:col-span-5 space-y-4">
+                <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/60 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5 text-teal-400" />
+                      Trình Giả Lập Đọc Webtoon (Comic Reader Live):
+                    </h4>
+                    <span className="text-[10px] text-teal-400">Extension Simulator</span>
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Mô phỏng trải nghiệm người đọc: Bấm vào tranh hoặc cuộn để kích hoạt âm thanh tự động nhúng trong file ảnh!
+                  </p>
+
+                  {/* Comic Reader Frame */}
+                  <div className="rounded-xl border border-slate-700 bg-slate-950 p-3 max-h-[360px] overflow-y-auto space-y-3 shadow-inner">
+                    {audioFiles.map((frame, idx) => (
+                      <div
+                        key={frame.id}
+                        onClick={() => {
+                          setActiveReaderFrameIndex(idx);
+                          playSynthesizedSound(audioSrc, audioVolume);
+                          setAudioPlayedNotice(`Đã kích hoạt '${audioSrc}' tại Frame ${idx + 1}!`);
+                          setTimeout(() => setAudioPlayedNotice(null), 2500);
+                        }}
+                        className={`p-2 rounded-lg border transition-all cursor-pointer ${
+                          activeReaderFrameIndex === idx
+                            ? "border-teal-500 bg-teal-950/20"
+                            : "border-slate-800 hover:border-slate-700 bg-slate-900/60"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between mb-1.5 text-[11px]">
+                          <span className="font-semibold text-slate-300">Khung Hình #{idx + 1}</span>
+                          <span className="text-teal-400 font-mono text-[10px] flex items-center gap-1">
+                            <Radio className="w-2.5 h-2.5 animate-pulse" />
+                            {audioTrigger}
+                          </span>
+                        </div>
+                        <div className="w-full h-24 rounded bg-slate-950 border border-slate-800 flex items-center justify-center overflow-hidden">
+                          <img src={frame.dataUrl} alt={frame.name} className="h-20 object-contain" />
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-1 font-mono truncate">
+                          SFX: <span className="text-teal-300">{audioSrc}</span> ({audioDelay}ms)
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {audioPlayedNotice && (
+                    <div className="p-2 rounded-lg bg-teal-950/60 border border-teal-800 text-teal-300 text-xs flex items-center gap-2">
+                      <Volume2 className="w-4 h-4 animate-bounce" />
+                      <span>{audioPlayedNotice}</span>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

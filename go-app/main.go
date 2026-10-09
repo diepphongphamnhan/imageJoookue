@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -44,7 +45,6 @@ func scanFolderForImages(dir string) []string {
 			images = append(images, filepath.Join(dir, entry.Name()))
 		}
 	}
-	// Sắp xếp tự nhiên theo tên file
 	sort.Strings(images)
 	return images
 }
@@ -63,10 +63,8 @@ func showMultiFileSelector(win fyne.Window, initialDir string, onSelected func(s
 	currentFolder := initialDir
 	dirLabel := widget.NewLabelWithStyle("Thư mục: "+currentFolder, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
 
-	// Danh sách các file có trong thư mục hiện tại
 	var dirFiles []string
 	selectedMap := make(map[string]bool)
-
 	summaryLabel := widget.NewLabel("Đã chọn: 0 file")
 
 	fileList := widget.NewList(
@@ -88,7 +86,6 @@ func showMultiFileSelector(win fyne.Window, initialDir string, onSelected func(s
 			fname := filepath.Base(fpath)
 			lbl.SetText(fname)
 
-			// Ngăn loop sự kiện OnChanged
 			chk.OnChanged = nil
 			chk.SetChecked(selectedMap[fpath])
 			chk.OnChanged = func(checked bool) {
@@ -109,7 +106,6 @@ func showMultiFileSelector(win fyne.Window, initialDir string, onSelected func(s
 		dirLabel.SetText("Thư mục: " + currentFolder)
 		dirFiles = scanFolderForImages(currentFolder)
 		selectedMap = make(map[string]bool)
-		// Mặc định chọn tất cả file ảnh tìm thấy để tiện cho người dùng
 		for _, f := range dirFiles {
 			selectedMap[f] = true
 		}
@@ -117,7 +113,6 @@ func showMultiFileSelector(win fyne.Window, initialDir string, onSelected func(s
 		fileList.Refresh()
 	}
 
-	// Đổi thư mục
 	btnBrowseFolder := widget.NewButtonWithIcon("Đổi Thư Mục...", theme.FolderOpenIcon(), func() {
 		fd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
 			if err != nil || lu == nil {
@@ -193,27 +188,29 @@ func main() {
 
 	// Khởi tạo ứng dụng Fyne v2
 	myApp := app.NewWithID("com.developer.fyne.imagick.suite")
-	mainWindow := myApp.NewWindow("Trình Xử Lý Ảnh Hàng Loạt & Tạo Sprite Sheet - Fyne v2")
-	mainWindow.Resize(fyne.NewSize(880, 660))
+	mainWindow := myApp.NewWindow("Bộ Công Cụ Xử Lý Ảnh Chuyên Nghiệp - Fyne v2 & ImageMagick")
+	mainWindow.Resize(fyne.NewSize(960, 720))
 	mainWindow.CenterOnScreen()
 
-	// Xây dựng 2 màn hình tính năng chính bằng Fyne Container Tabs
+	// Xây dựng 4 màn hình tính năng chính bằng Fyne Container Tabs
 	batchTab, addBatchFiles := buildBatchConverterTab(mainWindow)
 	spriteTab, addSpriteFiles := buildSpriteSheetTab(mainWindow)
+	metadataTab, addMetaFiles := buildMetadataInjectorTab(mainWindow)
+	audioSyncTab, addAudioFiles := buildAudioSyncMapperTab(mainWindow)
 
 	tabs := container.NewAppTabs(
 		container.NewTabItemWithIcon("Chuyển Đổi Hàng Loạt", theme.StorageIcon(), batchTab),
 		container.NewTabItemWithIcon("Tạo Sprite Sheet", theme.GridIcon(), spriteTab),
+		container.NewTabItemWithIcon("Gắn Siêu Dữ Liệu (EXIF)", theme.InfoIcon(), metadataTab),
+		container.NewTabItemWithIcon("Liên Kết Âm Thanh (Webtoon)", theme.MediaPlayIcon(), audioSyncTab),
 	)
 	tabs.SetTabLocation(container.TabLocationTop)
 
 	// HỖ TRỢ KÉO THẢ NHIỀU FILE (DRAG & DROP MULTI-FILE NATIVE):
-	// Người dùng có thể kéo thả hàng chục file ảnh trực tiếp từ File Explorer vào cửa sổ ứng dụng!
 	mainWindow.SetOnDropped(func(pos fyne.Position, uris []fyne.URI) {
 		var droppedPaths []string
 		for _, u := range uris {
 			p := u.Path()
-			// Nếu thả thư mục, quét toàn bộ ảnh trong thư mục
 			fi, err := os.Stat(p)
 			if err == nil && fi.IsDir() {
 				folderImgs := scanFolderForImages(p)
@@ -224,10 +221,15 @@ func main() {
 		}
 
 		if len(droppedPaths) > 0 {
-			if tabs.SelectedIndex() == 0 {
+			switch tabs.SelectedIndex() {
+			case 0:
 				addBatchFiles(droppedPaths)
-			} else {
+			case 1:
 				addSpriteFiles(droppedPaths)
+			case 2:
+				addMetaFiles(droppedPaths)
+			case 3:
+				addAudioFiles(droppedPaths)
 			}
 			dialog.ShowInformation("Đã Thêm File", fmt.Sprintf("Đã tự động nạp %d file ảnh qua kéo thả!", len(droppedPaths)), mainWindow)
 		}
@@ -253,7 +255,6 @@ func buildBatchConverterTab(win fyne.Window) (fyne.CanvasObject, func([]string))
 		"Chọn nhiều file ảnh hoặc nạp cả thư mục cùng một lúc để chuyển đổi định dạng hàng loạt.",
 	)
 
-	// Danh sách file đã chọn
 	filesCountLabel := widget.NewLabel("Chưa chọn file ảnh nào (Có thể kéo thả nhiều file vào đây)")
 	fileListWidget := widget.NewList(
 		func() int { return len(selectedFiles) },
@@ -265,9 +266,7 @@ func buildBatchConverterTab(win fyne.Window) (fyne.CanvasObject, func([]string))
 		},
 	)
 
-	// Hàm thêm nhiều file cùng lúc (tránh trùng lặp)
 	addFiles := func(newPaths []string) {
-		addedCount := 0
 		for _, newPath := range newPaths {
 			exists := false
 			for _, f := range selectedFiles {
@@ -278,14 +277,12 @@ func buildBatchConverterTab(win fyne.Window) (fyne.CanvasObject, func([]string))
 			}
 			if !exists {
 				selectedFiles = append(selectedFiles, newPath)
-				addedCount++
 			}
 		}
 		filesCountLabel.SetText(fmt.Sprintf("Đã chọn: %d file ảnh", len(selectedFiles)))
 		fileListWidget.Refresh()
 	}
 
-	// 1. Nút "Chọn Nhiều File Ảnh..." (Mở hộp thoại chọn nhiều file với Checkbox & Chọn tất cả)
 	btnSelectMultiFiles := widget.NewButtonWithIcon("Chọn Nhiều File...", theme.FileImageIcon(), func() {
 		initialDir := ""
 		if len(selectedFiles) > 0 {
@@ -296,7 +293,6 @@ func buildBatchConverterTab(win fyne.Window) (fyne.CanvasObject, func([]string))
 		})
 	})
 
-	// 2. Nút "Nạp Cả Thư Mục..." (Chọn thư mục chứa hàng loạt file ảnh)
 	btnAddFolder := widget.NewButtonWithIcon("Nạp Cả Thư Mục...", theme.FolderOpenIcon(), func() {
 		dd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
 			if err != nil || lu == nil {
@@ -304,11 +300,11 @@ func buildBatchConverterTab(win fyne.Window) (fyne.CanvasObject, func([]string))
 			}
 			imgs := scanFolderForImages(lu.Path())
 			if len(imgs) == 0 {
-				dialog.ShowInformation("Thông Báo", "Không tìm thấy file ảnh hợp lệ nào trong thư mục đã chọn!", win)
+				dialog.ShowInformation("Thông Báo", "Không tìm thấy file ảnh hợp lệ nào trong thư mục!", win)
 				return
 			}
 			addFiles(imgs)
-			dialog.ShowInformation("Nạp Thành Công", fmt.Sprintf("Đã nạp thành công %d file ảnh từ thư mục:\n%s", len(imgs), lu.Path()), win)
+			dialog.ShowInformation("Nạp Thành Công", fmt.Sprintf("Đã nạp thành công %d file ảnh!", len(imgs)), win)
 		}, win)
 		dd.Show()
 	})
@@ -319,12 +315,10 @@ func buildBatchConverterTab(win fyne.Window) (fyne.CanvasObject, func([]string))
 		fileListWidget.Refresh()
 	})
 
-	// Dropdown chọn định dạng đầu ra
 	formatOptions := []string{"PNG", "JPG", "WEBP", "BMP", "TIFF", "GIF", "AVIF"}
 	formatSelect := widget.NewSelect(formatOptions, nil)
 	formatSelect.SetSelected("PNG")
 
-	// Thanh trượt chất lượng nén (Quality)
 	qualityLabel := widget.NewLabel("Chất lượng nén: 90%")
 	qualitySlider := widget.NewSlider(1, 100)
 	qualitySlider.SetValue(90)
@@ -332,7 +326,6 @@ func buildBatchConverterTab(win fyne.Window) (fyne.CanvasObject, func([]string))
 		qualityLabel.SetText(fmt.Sprintf("Chất lượng nén: %d%%", int(val)))
 	}
 
-	// Chọn thư mục lưu
 	outDirLabel := widget.NewLabel("Thư mục lưu: (Chưa chọn - sẽ lưu cùng thư mục ảnh gốc)")
 	btnSelectOutDir := widget.NewButtonWithIcon("Chọn Thư Mục Lưu...", theme.FolderOpenIcon(), func() {
 		dd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
@@ -345,12 +338,10 @@ func buildBatchConverterTab(win fyne.Window) (fyne.CanvasObject, func([]string))
 		dd.Show()
 	})
 
-	// Thanh tiến trình
 	progressBar := widget.NewProgressBar()
 	progressBar.SetValue(0)
-	statusLabel := widget.NewLabel("Sẵn sàng. (Hỗ trợ kéo thả nhiều file vào đây)")
+	statusLabel := widget.NewLabel("Sẵn sàng.")
 
-	// Nút Bắt đầu chuyển đổi
 	var btnConvert *widget.Button
 	btnConvert = widget.NewButtonWithIcon("Bắt Đầu Chuyển Đổi Hàng Loạt", theme.MediaPlayIcon(), func() {
 		if len(selectedFiles) == 0 {
@@ -470,7 +461,6 @@ func buildSpriteSheetTab(win fyne.Window) (fyne.CanvasObject, func([]string)) {
 		frameListWidget.Refresh()
 	}
 
-	// 1. Nút "Chọn Nhiều File Frame..."
 	btnSelectFrames := widget.NewButtonWithIcon("Chọn Nhiều Frame...", theme.FileImageIcon(), func() {
 		initialDir := ""
 		if len(frameFiles) > 0 {
@@ -481,7 +471,6 @@ func buildSpriteSheetTab(win fyne.Window) (fyne.CanvasObject, func([]string)) {
 		})
 	})
 
-	// 2. Nút "Nạp Cả Thư Mục Frame..."
 	btnAddFolder := widget.NewButtonWithIcon("Nạp Cả Thư Mục...", theme.FolderOpenIcon(), func() {
 		dd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
 			if err != nil || lu == nil {
@@ -493,7 +482,7 @@ func buildSpriteSheetTab(win fyne.Window) (fyne.CanvasObject, func([]string)) {
 				return
 			}
 			addFrames(imgs)
-			dialog.ShowInformation("Nạp Frame Thành Công", fmt.Sprintf("Đã nạp %d frame theo thứ tự từ thư mục:\n%s", len(imgs), lu.Path()), win)
+			dialog.ShowInformation("Nạp Frame Thành Công", fmt.Sprintf("Đã nạp %d frame theo thứ tự!", len(imgs)), win)
 		}, win)
 		dd.Show()
 	})
@@ -624,4 +613,537 @@ func buildSpriteSheetTab(win fyne.Window) (fyne.CanvasObject, func([]string)) {
 	split.SetOffset(0.55)
 
 	return split, addFrames
+}
+
+// -----------------------------------------------------------------------------
+// TÍNH NĂNG 3: GẮN SIÊU DỮ LIỆU TÙY CHỈNH (CUSTOM METADATA / EXIF INJECTION)
+// -----------------------------------------------------------------------------
+type MetadataRow struct {
+	KeyEntry   *widget.Entry
+	ValueEntry *widget.Entry
+	Container  *fyne.Container
+}
+
+func buildMetadataInjectorTab(win fyne.Window) (fyne.CanvasObject, func([]string)) {
+	var selectedFiles []string
+	var outputDirectory string
+
+	titleLabel := widget.NewLabelWithStyle(
+		"Gắn Siêu Dữ Liệu Tùy Chỉnh (Custom Metadata / EXIF Injection)",
+		fyne.TextAlignLeading,
+		fyne.TextStyle{Bold: true},
+	)
+	descLabel := widget.NewLabel(
+		"Nhúng thông tin bản quyền, tác giả, ghi chú vào bên trong cấu trúc ảnh (PNG, JPEG, WEBP) không suy giảm chất lượng điểm ảnh.",
+	)
+
+	filesCountLabel := widget.NewLabel("Chưa chọn file ảnh nào")
+	fileListWidget := widget.NewList(
+		func() int { return len(selectedFiles) },
+		func() fyne.CanvasObject {
+			return widget.NewLabel("File ảnh")
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			obj.(*widget.Label).SetText(fmt.Sprintf("%d. %s", id+1, filepath.Base(selectedFiles[id])))
+		},
+	)
+
+	addFiles := func(newPaths []string) {
+		for _, newPath := range newPaths {
+			exists := false
+			for _, f := range selectedFiles {
+				if f == newPath {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				selectedFiles = append(selectedFiles, newPath)
+			}
+		}
+		filesCountLabel.SetText(fmt.Sprintf("Đã chọn: %d file ảnh", len(selectedFiles)))
+		fileListWidget.Refresh()
+	}
+
+	btnSelectFiles := widget.NewButtonWithIcon("Chọn Nhiều File...", theme.FileImageIcon(), func() {
+		initialDir := ""
+		if len(selectedFiles) > 0 {
+			initialDir = filepath.Dir(selectedFiles[len(selectedFiles)-1])
+		}
+		showMultiFileSelector(win, initialDir, func(paths []string) {
+			addFiles(paths)
+		})
+	})
+
+	btnAddFolder := widget.NewButtonWithIcon("Nạp Cả Thư Mục...", theme.FolderOpenIcon(), func() {
+		dd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+			if err != nil || lu == nil {
+				return
+			}
+			imgs := scanFolderForImages(lu.Path())
+			if len(imgs) == 0 {
+				dialog.ShowInformation("Thông Báo", "Không tìm thấy file ảnh nào trong thư mục!", win)
+				return
+			}
+			addFiles(imgs)
+		}, win)
+		dd.Show()
+	})
+
+	btnClearFiles := widget.NewButtonWithIcon("Xóa Hết", theme.DeleteIcon(), func() {
+		selectedFiles = nil
+		filesCountLabel.SetText("Chưa chọn file ảnh nào")
+		fileListWidget.Refresh()
+	})
+
+	// Bảng Key-Value động
+	rowsContainer := container.NewVBox()
+	var rows []*MetadataRow
+
+	var refreshRows func()
+	refreshRows = func() {
+		rowsContainer.Objects = nil
+		for _, r := range rows {
+			rowsContainer.Add(r.Container)
+		}
+		rowsContainer.Refresh()
+	}
+
+	addKVRow := func(defaultKey, defaultVal string) {
+		kEntry := widget.NewEntry()
+		kEntry.SetPlaceHolder("Key (vd: Author, Copyright...)")
+		kEntry.SetText(defaultKey)
+
+		vEntry := widget.NewEntry()
+		vEntry.SetPlaceHolder("Value (vd: PhanKim, © 2026...)")
+		vEntry.SetText(defaultVal)
+
+		rowObj := &MetadataRow{
+			KeyEntry:   kEntry,
+			ValueEntry: vEntry,
+		}
+
+		btnDeleteRow := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
+			for idx, item := range rows {
+				if item == rowObj {
+					rows = append(rows[:idx], rows[idx+1:]...)
+					break
+				}
+			}
+			refreshRows()
+		})
+
+		rowObj.Container = container.NewBorder(nil, nil, nil, btnDeleteRow,
+			container.NewGridWithColumns(2, kEntry, vEntry),
+		)
+
+		rows = append(rows, rowObj)
+		refreshRows()
+	}
+
+	// Tạo sẵn một số cặp trường phổ biến
+	addKVRow("Author", "PhanKim")
+	addKVRow("Copyright", "© 2026 Studio")
+	addKVRow("Description", "Artwork Frame 01")
+
+	btnAddRow := widget.NewButtonWithIcon("Thêm Dòng Key-Value", theme.ContentAddIcon(), func() {
+		addKVRow("", "")
+	})
+
+	// Tùy chọn giữ lại EXIF hay ghi đè
+	keepOldExifRadio := widget.NewRadioGroup([]string{"Giữ lại EXIF cũ (Chỉ bổ sung trường mới)", "Ghi đè hoàn toàn (Xóa sạch EXIF cũ trước khi chèn)"}, nil)
+	keepOldExifRadio.SetSelected("Giữ lại EXIF cũ (Chỉ bổ sung trường mới)")
+
+	outDirLabel := widget.NewLabel("Thư mục lưu: (Mặc định: Thư mục 'metadata_out' cạnh ảnh gốc)")
+	btnSelectOutDir := widget.NewButtonWithIcon("Chọn Thư Mục Lưu...", theme.FolderOpenIcon(), func() {
+		dd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+			if err != nil || lu == nil {
+				return
+			}
+			outputDirectory = lu.Path()
+			outDirLabel.SetText(fmt.Sprintf("Thư mục lưu: %s", outputDirectory))
+		}, win)
+		dd.Show()
+	})
+
+	progressBar := widget.NewProgressBar()
+	progressBar.SetValue(0)
+	statusLabel := widget.NewLabel("Sẵn sàng gắn siêu dữ liệu.")
+
+	var btnInject *widget.Button
+	btnInject = widget.NewButtonWithIcon("Gắn Metadata Hàng Loạt", theme.DocumentSaveIcon(), func() {
+		if len(selectedFiles) == 0 {
+			dialog.ShowInformation("Thông Báo", "Vui lòng chọn ít nhất một file ảnh!", win)
+			return
+		}
+
+		metaMap := make(map[string]string)
+		for _, r := range rows {
+			k := strings.TrimSpace(r.KeyEntry.Text)
+			v := strings.TrimSpace(r.ValueEntry.Text)
+			if k != "" {
+				metaMap[k] = v
+			}
+		}
+
+		if len(metaMap) == 0 {
+			dialog.ShowInformation("Thông Báo", "Vui lòng nhập ít nhất một cặp Key-Value siêu dữ liệu!", win)
+			return
+		}
+
+		if outputDirectory == "" {
+			outputDirectory = filepath.Join(filepath.Dir(selectedFiles[0]), "metadata_out")
+			outDirLabel.SetText(fmt.Sprintf("Thư mục lưu: %s", outputDirectory))
+		}
+
+		btnInject.Disable()
+		progressBar.SetValue(0)
+		statusLabel.SetText("Đang nhúng MagickSetImageProperty vào header...")
+
+		keepOld := keepOldExifRadio.Selected == "Giữ lại EXIF cũ (Chỉ bổ sung trường mới)"
+
+		go func() {
+			total := len(selectedFiles)
+			success := 0
+			fail := 0
+
+			for idx, file := range selectedFiles {
+				currentIdx := idx + 1
+				destPath := filepath.Join(outputDirectory, filepath.Base(file))
+				err := InjectCustomMetadata(file, destPath, metaMap, keepOld)
+
+				progressVal := float64(currentIdx) / float64(total)
+				if err != nil {
+					fail++
+				} else {
+					success++
+				}
+
+				progressBar.SetValue(progressVal)
+				statusLabel.SetText(fmt.Sprintf("Đang xử lý (%d/%d): %s", currentIdx, total, filepath.Base(file)))
+			}
+
+			btnInject.Enable()
+			statusLabel.SetText(fmt.Sprintf("Hoàn tất! Thành công: %d, Thất bại: %d", success, fail))
+
+			dialog.ShowInformation("Hoàn Tất Gắn Siêu Dữ Liệu",
+				fmt.Sprintf("Đã nhúng thành công %d trường siêu dữ liệu vào %d file ảnh!\nThư mục lưu: %s",
+					len(metaMap), success, outputDirectory), win)
+		}()
+	})
+	btnInject.Importance = widget.HighImportance
+
+	leftPanel := container.NewVBox(
+		titleLabel,
+		descLabel,
+		widget.NewSeparator(),
+		container.NewHBox(btnSelectFiles, btnAddFolder, btnClearFiles),
+		filesCountLabel,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Bảng Thuộc Tính Siêu Dữ Liệu (Key - Value):", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewGridWithColumns(2,
+			widget.NewLabelWithStyle("Tên Trường (Key)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			widget.NewLabelWithStyle("Giá Trị (Value)", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		),
+		rowsContainer,
+		btnAddRow,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Chế Độ Xử Lý EXIF:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		keepOldExifRadio,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Vị Trí Lưu:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		btnSelectOutDir,
+		outDirLabel,
+		widget.NewSeparator(),
+		btnInject,
+		progressBar,
+		statusLabel,
+	)
+
+	split := container.NewHSplit(
+		container.NewPadded(leftPanel),
+		container.NewPadded(container.NewBorder(
+			widget.NewLabelWithStyle("Danh Sách File Sẽ Gắn Metadata:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			nil, nil, nil,
+			fileListWidget,
+		)),
+	)
+	split.SetOffset(0.60)
+
+	return split, addFiles
+}
+
+// -----------------------------------------------------------------------------
+// TÍNH NĂNG 4: LIÊN KẾT ÂM THANH (AUDIO SYNC MAPPER FOR WEBTOON/COMIC)
+// -----------------------------------------------------------------------------
+func buildAudioSyncMapperTab(win fyne.Window) (fyne.CanvasObject, func([]string)) {
+	var selectedFiles []string
+	var outputDirectory string
+
+	titleLabel := widget.NewLabelWithStyle(
+		"Trình Liên Kết Âm Thanh (Audio Sync Mapper - Webtoon/Comic)",
+		fyne.TextAlignLeading,
+		fyne.TextStyle{Bold: true},
+	)
+	descLabel := widget.NewLabel(
+		"Nhúng kịch bản phát âm thanh trực tiếp vào từng bức ảnh truyện tranh để Extension/App tự phát nhạc khi đọc đến.",
+	)
+
+	filesCountLabel := widget.NewLabel("Chưa chọn file ảnh truyện tranh nào")
+	fileListWidget := widget.NewList(
+		func() int { return len(selectedFiles) },
+		func() fyne.CanvasObject {
+			return widget.NewLabel("Trang truyện")
+		},
+		func(id widget.ListItemID, obj fyne.CanvasObject) {
+			obj.(*widget.Label).SetText(fmt.Sprintf("Trang %d: %s", id+1, filepath.Base(selectedFiles[id])))
+		},
+	)
+
+	addFiles := func(newPaths []string) {
+		for _, newPath := range newPaths {
+			exists := false
+			for _, f := range selectedFiles {
+				if f == newPath {
+					exists = true
+					break
+				}
+			}
+			if !exists {
+				selectedFiles = append(selectedFiles, newPath)
+			}
+		}
+		filesCountLabel.SetText(fmt.Sprintf("Đã chọn: %d trang truyện", len(selectedFiles)))
+		fileListWidget.Refresh()
+	}
+
+	btnSelectFiles := widget.NewButtonWithIcon("Chọn File Trang...", theme.FileImageIcon(), func() {
+		initialDir := ""
+		if len(selectedFiles) > 0 {
+			initialDir = filepath.Dir(selectedFiles[len(selectedFiles)-1])
+		}
+		showMultiFileSelector(win, initialDir, func(paths []string) {
+			addFiles(paths)
+		})
+	})
+
+	btnAddFolder := widget.NewButtonWithIcon("Nạp Cả Thư Mục Chapter...", theme.FolderOpenIcon(), func() {
+		dd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+			if err != nil || lu == nil {
+				return
+			}
+			imgs := scanFolderForImages(lu.Path())
+			if len(imgs) == 0 {
+				dialog.ShowInformation("Thông Báo", "Không tìm thấy file ảnh trang nào trong thư mục!", win)
+				return
+			}
+			addFiles(imgs)
+		}, win)
+		dd.Show()
+	})
+
+	btnClearFiles := widget.NewButtonWithIcon("Xóa Hết", theme.DeleteIcon(), func() {
+		selectedFiles = nil
+		filesCountLabel.SetText("Chưa chọn file ảnh nào")
+		fileListWidget.Refresh()
+	})
+
+	// Form cấu hình kịch bản âm thanh
+	audioSrcEntry := widget.NewEntry()
+	audioSrcEntry.SetPlaceHolder("Tên file audio (vd: sfx_sword_slash.mp3, bgm_ch1.ogg)")
+	audioSrcEntry.SetText("sfx_sword_slash.mp3")
+
+	btnPickAudioFile := widget.NewButtonWithIcon("Chọn File Audio...", theme.FileIcon(), func() {
+		fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			if err != nil || reader == nil {
+				return
+			}
+			audioSrcEntry.SetText(filepath.Base(reader.URI().Path()))
+		}, win)
+		fd.SetFilter(storage.NewExtensionFileFilter([]string{".mp3", ".ogg", ".wav", ".aac", ".m4a", ".flac"}))
+		fd.Show()
+	})
+
+	triggerSelect := widget.NewSelect([]string{
+		"on_scroll_view (Phát ngay khi cuộn vào tầm mắt)",
+		"on_center_screen (Phát khi ảnh nằm chính giữa màn hình)",
+		"on_click (Phát khi độc giả nhấn/chạm vào ảnh)",
+	}, nil)
+	triggerSelect.SetSelected("on_scroll_view (Phát ngay khi cuộn vào tầm mắt)")
+
+	delayEntry := widget.NewEntry()
+	delayEntry.SetPlaceHolder("300")
+	delayEntry.SetText("300")
+
+	volumeLabel := widget.NewLabel("Âm lượng: 80%")
+	volumeSlider := widget.NewSlider(0, 100)
+	volumeSlider.SetValue(80)
+
+	loopCheck := widget.NewCheck("Lặp vô hạn (Loop - Thích hợp cho nhạc nền BGM)", nil)
+	loopCheck.SetChecked(false)
+
+	// Khung xem trước JSON Realtime
+	jsonPreviewBox := widget.NewMultiLineEntry()
+	jsonPreviewBox.TextStyle = fyne.TextStyle{Monospace: true}
+	jsonPreviewBox.Wrapping = fyne.TextWrapBreak
+
+	updateJSONPreview := func() {
+		rawTrigger := "on_scroll_view"
+		if strings.Contains(triggerSelect.Selected, "center") {
+			rawTrigger = "on_center_screen"
+		} else if strings.Contains(triggerSelect.Selected, "click") {
+			rawTrigger = "on_click"
+		}
+
+		delayVal, _ := strconv.Atoi(delayEntry.Text)
+		volVal := volumeSlider.Value / 100.0
+
+		detail := AudioSyncDetail{
+			Src:     audioSrcEntry.Text,
+			Trigger: rawTrigger,
+			Volume:  volVal,
+			Delay:   delayVal,
+			Loop:    loopCheck.Checked,
+		}
+
+		payload := AudioSyncPayload{AudioSync: detail}
+		b, err := json.MarshalIndent(payload, "", "  ")
+		if err == nil {
+			jsonPreviewBox.SetText(string(b))
+		}
+	}
+
+	audioSrcEntry.OnChanged = func(_ string) { updateJSONPreview() }
+	delayEntry.OnChanged = func(_ string) { updateJSONPreview() }
+	triggerSelect.OnChanged = func(_ string) { updateJSONPreview() }
+	loopCheck.OnChanged = func(_ bool) { updateJSONPreview() }
+	volumeSlider.OnChanged = func(val float64) {
+		volumeLabel.SetText(fmt.Sprintf("Âm lượng: %d%%", int(val)))
+		updateJSONPreview()
+	}
+
+	updateJSONPreview()
+
+	outDirLabel := widget.NewLabel("Thư mục lưu: (Mặc định: Thư mục 'audio_synced_out' cạnh ảnh gốc)")
+	btnSelectOutDir := widget.NewButtonWithIcon("Chọn Thư Mục Lưu...", theme.FolderOpenIcon(), func() {
+		dd := dialog.NewFolderOpen(func(lu fyne.ListableURI, err error) {
+			if err != nil || lu == nil {
+				return
+			}
+			outputDirectory = lu.Path()
+			outDirLabel.SetText(fmt.Sprintf("Thư mục lưu: %s", outputDirectory))
+		}, win)
+		dd.Show()
+	})
+
+	progressBar := widget.NewProgressBar()
+	progressBar.SetValue(0)
+	statusLabel := widget.NewLabel("Sẵn sàng nhúng kịch bản âm thanh.")
+
+	var btnEmbed *widget.Button
+	btnEmbed = widget.NewButtonWithIcon("Nhúng Kịch Bản Âm Thanh Hàng Loạt", theme.MediaPlayIcon(), func() {
+		if len(selectedFiles) == 0 {
+			dialog.ShowInformation("Thông Báo", "Vui lòng chọn ít nhất một file ảnh trang truyện!", win)
+			return
+		}
+
+		rawTrigger := "on_scroll_view"
+		if strings.Contains(triggerSelect.Selected, "center") {
+			rawTrigger = "on_center_screen"
+		} else if strings.Contains(triggerSelect.Selected, "click") {
+			rawTrigger = "on_click"
+		}
+
+		delayVal, _ := strconv.Atoi(delayEntry.Text)
+		volVal := volumeSlider.Value / 100.0
+
+		detail := AudioSyncDetail{
+			Src:     audioSrcEntry.Text,
+			Trigger: rawTrigger,
+			Volume:  volVal,
+			Delay:   delayVal,
+			Loop:    loopCheck.Checked,
+		}
+
+		if outputDirectory == "" {
+			outputDirectory = filepath.Join(filepath.Dir(selectedFiles[0]), "audio_synced_out")
+			outDirLabel.SetText(fmt.Sprintf("Thư mục lưu: %s", outputDirectory))
+		}
+
+		btnEmbed.Disable()
+		progressBar.SetValue(0)
+		statusLabel.SetText("Đang nhúng kịch bản vào chunk 'comic_audio_config'...")
+
+		go func() {
+			total := len(selectedFiles)
+			success := 0
+			fail := 0
+
+			for idx, file := range selectedFiles {
+				currentIdx := idx + 1
+				destPath := filepath.Join(outputDirectory, filepath.Base(file))
+				err := InjectAudioSyncConfig(file, destPath, detail)
+
+				progressVal := float64(currentIdx) / float64(total)
+				if err != nil {
+					fail++
+				} else {
+					success++
+				}
+
+				progressBar.SetValue(progressVal)
+				statusLabel.SetText(fmt.Sprintf("Đang nhúng (%d/%d): %s", currentIdx, total, filepath.Base(file)))
+			}
+
+			btnEmbed.Enable()
+			statusLabel.SetText(fmt.Sprintf("Hoàn tất! Thành công: %d, Thất bại: %d", success, fail))
+
+			dialog.ShowInformation("Hoàn Tất Nhúng Âm Thanh",
+				fmt.Sprintf("Đã nhúng thành công kịch bản âm thanh vào %d trang truyện!\nThư mục lưu: %s",
+					success, outputDirectory), win)
+		}()
+	})
+	btnEmbed.Importance = widget.HighImportance
+
+	leftPanel := container.NewVBox(
+		titleLabel,
+		descLabel,
+		widget.NewSeparator(),
+		container.NewHBox(btnSelectFiles, btnAddFolder, btnClearFiles),
+		filesCountLabel,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Cấu Hình Kịch Bản Âm Thanh (Audio Script):", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewBorder(nil, nil, nil, btnPickAudioFile, audioSrcEntry),
+		widget.NewLabel("Sự kiện kích hoạt (Trigger):"),
+		triggerSelect,
+		container.NewGridWithColumns(2,
+			widget.NewLabel("Độ trễ kích hoạt (ms):"), delayEntry,
+		),
+		volumeLabel,
+		volumeSlider,
+		loopCheck,
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Xem Trước Kịch Bản JSON (Metadata Sẽ Gắn):", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		container.NewPadded(jsonPreviewBox),
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("Vị Trí Lưu:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		btnSelectOutDir,
+		outDirLabel,
+		widget.NewSeparator(),
+		btnEmbed,
+		progressBar,
+		statusLabel,
+	)
+
+	split := container.NewHSplit(
+		container.NewPadded(leftPanel),
+		container.NewPadded(container.NewBorder(
+			widget.NewLabelWithStyle("Danh Sách Trang Truyện:", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			nil, nil, nil,
+			fileListWidget,
+		)),
+	)
+	split.SetOffset(0.58)
+
+	return split, addFiles
 }
