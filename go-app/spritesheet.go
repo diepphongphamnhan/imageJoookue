@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"gopkg.in/gographics/imagick.v3/imagick"
 )
@@ -83,7 +82,8 @@ func generateUsingMontageAPI(cfg SpriteSheetConfig) (string, error) {
 	// 3. Khởi tạo DrawingWand cho tác vụ Montage
 	dw := imagick.NewDrawingWand()
 	defer dw.Destroy()
-	dw.SetBackgroundColor(bgWand)
+	// Màu nền trong suốt ("none") được thiết lập trên containerWand qua SetBackgroundColor.
+	// DrawingWand chỉ cần thiết lập FillColor.
 	dw.SetFillColor(bgWand)
 
 	// 4. Chuẩn bị tham số cho hàm MontageImage:
