@@ -1,0 +1,6 @@
+{
+  "name": "Go ImageMagick & Fyne Desktop Studio",
+  "description": "Bộ mã nguồn ứng dụng Golang Desktop Fyne v2 & ImageMagick MagickWand (CGo) xử lý chuyển đổi ảnh hàng loạt, tạo Sprite Sheet và tài liệu build độc lập.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,269 @@
+================================================================================
+HƯỚNG DẪN ĐÓNG GÓI (BUILD) ĐỘC LẬP - FYNE V2 & IMAGEMAGICK CGO (STANDALONE ARCHITECTURE)
+================================================================================
+Tác giả: Senior Golang & CGo Systems Engineer
+Dự án: Fyne v2 Batch Image Converter & Sprite Sheet Generator
+Thư viện CGo: gopkg.in/gographics/imagick.v3/imagick
+Mục tiêu: Đóng gói thành file thực thi (.exe trên Windows, binary trên Linux) để
+người dùng cuối (End-user) KHÔNG CẦN CÀI ĐẶT ImageMagick vẫn chạy bình thường 100%.
+
+================================================================================
+MỤC LỤC
+================================================================================
+1. Nguyên lý Standalone & Rào cản CGo với ImageMagick
+2. Hướng dẫn Build trên LINUX (Ubuntu, Debian, Arch Linux)
+   2.1. Cấu hình Biến Môi Trường (PKG_CONFIG_PATH, CGO_CFLAGS, CGO_LDFLAGS)
+   2.2. Build Tĩnh (Static Linking) với libMagickWand.a và libMagickCore.a
+3. Hướng dẫn Build trên WINDOWS (MSYS2 / MinGW-w64)
+   3.1. Thiết lập Toolchain MSYS2 & ImageMagick MinGW
+   3.2. Lệnh Biên Dịch Không Hiện Màn Hình Đen (Console Window)
+   3.3. Danh Sách Đầy Đủ Các File DLL Bắt Buộc Copy Cạnh .exe
+   3.4. Script PowerShell / Bash Tự Động Gom Tất Cả DLL Cần Thiết
+4. Các lỗi thường gặp (Troubleshooting) và Cách khắc phục
+5. Tối ưu kích thước Binary (Strip Symbols & UPX)
+
+================================================================================
+1. NGUYÊN LÝ STANDALONE & RÀO CẢN CGO VỚI IMAGEMAGICK
+================================================================================
+Thư viện `imagick.v3` gọi trực tiếp vào C-API (MagickWand & MagickCore) của ImageMagick.
+Mặc định, khi biên dịch động (Dynamic Linking):
+- Trên Linux: Ứng dụng liên kết với `libMagickWand-7.Q16HDRI.so`.
+- Trên Windows: Ứng dụng cần các file DLL tương ứng nằm trong PATH hoặc cùng thư mục file .exe.
+
+Để biến ứng dụng thành "Standalone" (chạy trên bất kỳ máy tính nào của người dùng):
+- Chiến lược A (Khuyên dùng cho Windows): Dynamic Linking kèm Portable DLLs:
+  Đặt tất cả các file DLL phụ thuộc (ImageMagick + MinGW runtime + Image Codecs)
+  vào cùng thư mục chứa file `.exe`. Windows luôn ưu tiên tìm DLL ở thư mục chứa exe trước tiên.
+- Chiến lược B (Khuyên dùng cho Linux): Static Linking:
+  Biên dịch tĩnh hoàn toàn các file `.a` vào thẳng bên trong ELF binary của Go.
+
+================================================================================
+2. HƯỚNG DẪN BUILD TRÊN LINUX (UBUNTU / DEBIAN / ARCH LINUX)
+================================================================================
+
+2.1. Cài Đặt Thư Viện Phát Triển (Development Headers):
+-----------------------------------------------------------------------------
+* Trên Ubuntu 22.04 / 24.04 / Debian 12:
+  sudo apt-get update
+  sudo apt-get install -y gcc pkg-config libgl1-mesa-dev xorg-dev \
+      libmagickwand-dev libmagickcore-dev
+
+* Trên Arch Linux / Manjaro:
+  sudo pacman -Syu --needed base-devel imagemagick pkgconf libgl xorg-server-devel
+
+2.2. Cấu Hình Biến Môi Trường CGO:
+-----------------------------------------------------------------------------
+Kiểm tra cấu hình MagickWand của hệ thống:
+  pkg-config --cflags MagickWand
+  pkg-config --libs MagickWand
+
+Nếu ImageMagick được cài đặt tại đường dẫn chuẩn (/usr hoặc /usr/local),
+bạn chỉ cần export:
+  export CGO_ENABLED=1
+  export PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+  export CGO_CFLAGS="$(pkg-config --cflags MagickWand)"
+  export CGO_LDFLAGS="$(pkg-config --libs MagickWand)"
+
+Nếu bạn tự biên dịch ImageMagick 7 vào một thư mục riêng (ví dụ: /opt/imagemagick):
+  export PKG_CONFIG_PATH="/opt/imagemagick/lib/pkgconfig:$PKG_CONFIG_PATH"
+  export CGO_CFLAGS="-I/opt/imagemagick/include/ImageMagick-7"
+  export CGO_LDFLAGS="-L/opt/imagemagick/lib -lMagickWand-7.Q16HDRI -lMagickCore-7.Q16HDRI"
+
+2.3. Hướng Dẫn Build Tĩnh Hoàn Toàn (Static Linking) Trên Linux:
+-----------------------------------------------------------------------------
+Để file binary chạy được trên bất kỳ máy Linux nào mà không cần cài ImageMagick:
+
+Bước 1: Tự compile ImageMagick thành các file thư viện tĩnh (.a)
+  git clone https://github.com/ImageMagick/ImageMagick.git
+  cd ImageMagick
+  ./configure --prefix=/opt/im7-static \
+              --enable-static \
+              --disable-shared \
+              --with-quantum-depth=16 \
+              --enable-hdri=yes \
+              --without-x \
+              --with-png=yes \
+              --with-jpeg=yes \
+              --with-webp=yes \
+              --with-zlib=yes
+  make -j$(nproc)
+  sudo make install
+
+Bước 2: Cấu hình Go để liên kết với các file .a:
+  export CGO_ENABLED=1
+  export PKG_CONFIG_PATH="/opt/im7-static/lib/pkgconfig"
+  
+  # Cờ linking tĩnh tích hợp đầy đủ các codec ảnh phụ thuộc:
+  export CGO_LDFLAGS="-L/opt/im7-static/lib \
+    /opt/im7-static/lib/libMagickWand-7.Q16HDRI.a \
+    /opt/im7-static/lib/libMagickCore-7.Q16HDRI.a \
+    -lpng -ljpeg -lwebp -lwebpmux -lz -lm -lgomp -lpthread -ldl"
+
+Bước 3: Biên dịch file Go:
+  go build -tags osusergo,netgo \
+    -ldflags="-extldflags '-static -lGL -lX11' -s -w" \
+    -o FyneImageTools-linux-x64 .
+
+Lưu ý với Fyne: Do Fyne sử dụng OpenGL (libGL.so, X11), nên chỉ cần liên kết tĩnh
+ImageMagick còn các thư viện driver đồ họa hệ thống (Mesa / Nvidia) nên để dynamic
+để tương thích phần cứng card màn hình của user.
+
+================================================================================
+3. HƯỚNG DẪN BUILD TRÊN WINDOWS (MSYS2 / MINGW-W64)
+================================================================================
+Đây là phương pháp chuẩn mực và tối ưu nhất để tạo file .exe độc lập chạy trên
+mọi máy tính Windows 10/11 mà KHÔNG bắt người dùng cài đặt ImageMagick.
+
+3.1. Thiết Lập Môi Trường MSYS2:
+-----------------------------------------------------------------------------
+1. Tải và cài đặt MSYS2 từ https://www.msys2.org/
+2. Mở terminal "MSYS2 MINGW64" (Cực kỳ quan trọng: Phải mở đúng shell MINGW64,
+   không dùng shell MSYS mặc định).
+3. Cập nhật hệ thống và cài đặt GCC, Go, ImageMagick, Pkg-config:
+   pacman -Syu
+   pacman -S --needed \
+     mingw-w64-x86_64-toolchain \
+     mingw-w64-x86_64-imagemagick \
+     mingw-w64-x86_64-pkg-config \
+     mingw-w64-x86_64-go
+
+3.2. Cấu Hình Biến Môi Trường Trong MSYS2 MINGW64:
+-----------------------------------------------------------------------------
+Trong terminal MSYS2 MinGW64, chạy:
+  export CGO_ENABLED=1
+  export CC=x86_64-w64-mingw32-gcc
+  export PKG_CONFIG_PATH="/mingw64/lib/pkgconfig"
+  export CGO_CFLAGS="$(pkg-config --cflags MagickWand)"
+  export CGO_LDFLAGS="$(pkg-config --libs MagickWand)"
+
+3.3. Lệnh Biên Dịch File .exe:
+-----------------------------------------------------------------------------
+Lệnh build với cờ "-H=windowsgui" để ẩn cửa sổ console command line màu đen,
+kèm cờ "-s -w" để xóa debug symbols giúp giảm dung lượng file thực thi:
+
+  go build -v -ldflags "-H=windowsgui -s -w" -o dist/FyneImageTools.exe .
+
+3.4. DANH SÁCH CÁC FILE DLL BẮT BUỘC PHẢI COPY ĐẶT CẠNH FILE .EXE:
+-----------------------------------------------------------------------------
+Sau khi tạo ra file `dist/FyneImageTools.exe`, để người dùng máy khác bấm vào chạy ngay,
+bạn BẮT BUỘC phải copy các file .dll từ thư mục `C:\msys64\mingw64\bin\` vào
+thư mục `dist\` (nơi chứa file `FyneImageTools.exe`):
+
+[Nhóm 1: ImageMagick Core DLLs]
+- libMagickWand-7.Q16HDRI-*.dll     (Chứa toàn bộ API MagickWand)
+- libMagickCore-7.Q16HDRI-*.dll     (Engine xử lý lõi của ImageMagick)
+
+[Nhóm 2: MinGW & C/C++ Runtime DLLs]
+- libwinpthread-1.dll               (Quản lý đa luồng POSIX threads)
+- libgcc_s_seh-1.dll                (GCC Runtime SEH exception handling)
+- libstdc++-6.dll                   (C++ Standard Library)
+- libgomp-1.dll                     (OpenMP - Xử lý đa luồng song song CPU của ImageMagick)
+
+[Nhóm 3: Codec Giải Mã Định Dạng Ảnh]
+- libpng16-16.dll                   (Đọc và ghi định dạng PNG)
+- libjpeg-8.dll (hoặc libturbojpeg.dll) (Đọc và ghi định dạng JPEG/JPG)
+- libwebp-7.dll                     (Đọc và ghi định dạng WEBP)
+- libwebpmux-3.dll                  (Hỗ trợ đóng gói WEBP Animation/Metadata)
+- libwebpdecoder-3.dll              (Bộ giải mã WebP hiệu năng cao)
+- libsharpyuv-0.dll                 (Chuyển đổi không gian màu RGB-YUV cho WebP)
+- libtiff-6.dll (hoặc libtiff-5.dll)(Đọc và ghi định dạng TIFF)
+- zlib1.dll                         (Nén dữ liệu Deflate)
+- liblzma-5.dll                     (Nén XZ / LZMA cho các định dạng ảnh lớn)
+- libbz2-1.dll                      (Nén Bzip2)
+- libbrotlicommon.dll               (Brotli compression)
+- libbrotlidec.dll                  (Brotli decompression)
+
+[Nhóm 4: Font & Vector Rendering (Tùy chọn cho Drawing)]
+- libfreetype-6.dll
+- libharfbuzz-0.dll
+- libxml2-2.dll
+
+3.5. SCRIPT TỰ ĐỘNG COPY TOÀN BỘ DLL BẰNG LỆNH LDD (BASH / POWERSHELL):
+-----------------------------------------------------------------------------
+Thay vì phải tìm và copy từng file bằng tay, hãy dùng script tự động cực kỳ
+nhanh sau đây:
+
+* Script Bash (Chạy trực tiếp trong terminal MSYS2 MinGW64):
+-----------------------------------------------------------------------------
+#!/bin/bash
+mkdir -p dist
+go build -ldflags "-H=windowsgui -s -w" -o dist/FyneImageTools.exe .
+
+echo "Dang tu dong quet va copy cac file DLL phu thuoc..."
+ldd dist/FyneImageTools.exe | grep -i '/mingw64/bin/' | awk '{print $3}' | while read -r dll; do
+    echo "Copying: $(basename "$dll")"
+    cp -u "$dll" dist/
+done
+
+# Copy them cac DLL plugin ImageMagick neu can:
+cp -u /mingw64/bin/libMagick*.dll dist/
+cp -u /mingw64/bin/libgomp*.dll dist/
+cp -u /mingw64/bin/libwebp*.dll dist/
+cp -u /mingw64/bin/libpng*.dll dist/
+cp -u /mingw64/bin/libjpeg*.dll dist/
+cp -u /mingw64/bin/zlib1.dll dist/
+cp -u /mingw64/bin/libwinpthread-1.dll dist/
+cp -u /mingw64/bin/libgcc_s_seh-1.dll dist/
+cp -u /mingw64/bin/libstdc++-6.dll dist/
+
+echo "HOAN TAT! Thu muc 'dist/' da san sang dong goi Zip hoac Inno Setup cho nguoi dung cuoi."
+
+================================================================================
+4. CÁC LỖI THƯỜNG GẶP (TROUBLESHOOTING)
+================================================================================
+
+Lỗi 1: "fatal error: wand/MagickWand.h: No such file or directory"
+-> Nguyên nhân: CGo không tìm thấy thư mục header C của ImageMagick.
+-> Cách sửa: Kiểm tra lại PKG_CONFIG_PATH hoặc gán trực tiếp:
+   export CGO_CFLAGS="-I/usr/include/ImageMagick-7" (trên Linux)
+   hoặc: export CGO_CFLAGS="-IC:/msys64/mingw64/include/ImageMagick-7" (trên Windows)
+
+Lỗi 2: Ứng dụng bật lên rồi tắt ngay, hoặc báo lỗi mã 0xc000007b trên Windows.
+-> Nguyên nhân: Lẫn lộn giữa DLL 32-bit và 64-bit (Architecture Mismatch).
+-> Cách sửa: Đảm bảo toàn bộ toolchain là MinGW-w64 x86_64 (64-bit) và tất cả
+   các file DLL trong thư mục dist đều lấy từ C:\msys64\mingw64\bin.
+
+Lỗi 3: "The code execution cannot proceed because libMagickWand-7.Q16HDRI-*.dll was not found."
+-> Nguyên nhân: Thiếu file DLL ở cạnh file .exe trên máy khách.
+-> Cách sửa: Chạy script copy DLL ở mục 3.5 để đưa đầy đủ DLL vào cùng thư mục với exe.
+
+Lỗi 4: Lỗi hiển thị font chữ tiếng Việt trên Fyne:
+-> Cách sửa: Fyne v2 hỗ trợ UTF-8 chuẩn. Nếu môi trường hệ thống thiếu font,
+   bạn có thể nhúng font TTF (như Roboto hoặc Be Vietnam Pro) bằng biến môi trường
+   FYNE_FONT="/duong_dan/font.ttf" hoặc dùng theme tùy chỉnh trong Go:
+   app.Settings().SetTheme(&MyVietnameseTheme{})
+
+================================================================================
+5. TỐI ƯU HÓA KÍCH THƯỚC FILE (BINARY OPTIMIZATION)
+================================================================================
+1. Cờ Linker:
+   Biên dịch với cờ `-ldflags "-s -w"` giúp giảm 30% - 40% dung lượng file binary
+   (loại bỏ bảng ký hiệu debug DWARF và symbol table).
+
+2. Nén file bằng UPX (Tùy chọn):
+   upx --best --lzma dist/FyneImageTools.exe
+   upx --best --lzma dist/*.dll
+   (Lưu ý: Một số phần mềm diệt virus có thể cảnh báo file nén UPX, nên nếu
+   phân phối cho khách hàng đại trà, chỉ cần nén cả thư mục `dist` thành file ZIP
+   hoặc đóng gói bộ cài bằng Inno Setup).
+
+================================================================================
+KẾT LUẬN
+================================================================================
+Sau khi làm theo các bước trên:
+- Thư mục `dist/` sẽ bao gồm:
+    FyneImageTools.exe
+    libMagickWand-7.Q16HDRI-*.dll
+    libMagickCore-7.Q16HDRI-*.dll
+    libwinpthread-1.dll
+    libgcc_s_seh-1.dll
+    libstdc++-6.dll
+    libgomp-1.dll
+    libpng16-16.dll
+    libjpeg-8.dll
+    libwebp-7.dll
+    zlib1.dll
+    ... (các DLL phụ thuộc)
+Người dùng chỉ cần giải nén file ZIP và nhấp đúp vào `FyneImageTools.exe` là app chạy
+ngay lập tức mà không cần cài thêm bất kỳ phần mềm hay runtime nào khác!
+================================================================================
