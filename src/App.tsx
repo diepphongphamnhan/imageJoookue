@@ -472,11 +472,22 @@ function SimulatorView() {
                     <div className="flex items-center gap-2">
                       <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow">
                         <FolderOpen className="w-3.5 h-3.5" />
-                        <span>Thêm File...</span>
+                        <span>Chọn Nhiều File...</span>
                         <input
                           type="file"
                           multiple
                           accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, "batch")}
+                        />
+                      </label>
+                      <label className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow">
+                        <Archive className="w-3.5 h-3.5" />
+                        <span>Nạp Cả Thư Mục...</span>
+                        <input
+                          type="file"
+                          multiple
+                          {...({ webkitdirectory: "" } as any)}
                           className="hidden"
                           onChange={(e) => handleFileUpload(e, "batch")}
                         />
@@ -681,11 +692,22 @@ function SimulatorView() {
                     <div className="flex items-center gap-2">
                       <label className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow">
                         <Plus className="w-3.5 h-3.5" />
-                        <span>Thêm Frame...</span>
+                        <span>Chọn Nhiều Frame...</span>
                         <input
                           type="file"
                           multiple
                           accept="image/*"
+                          className="hidden"
+                          onChange={(e) => handleFileUpload(e, "sprite")}
+                        />
+                      </label>
+                      <label className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-medium flex items-center gap-1.5 cursor-pointer shadow">
+                        <FolderOpen className="w-3.5 h-3.5" />
+                        <span>Nạp Cả Thư Mục...</span>
+                        <input
+                          type="file"
+                          multiple
+                          {...({ webkitdirectory: "" } as any)}
                           className="hidden"
                           onChange={(e) => handleFileUpload(e, "sprite")}
                         />
